@@ -253,6 +253,42 @@
             background: rgba(0, 0, 0, 0.2);
             border-radius: 8px;
         }
+
+        th {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        th:hover {
+            background-color: rgba(108, 92, 231, 0.5) !important;
+        }
+
+        th::after {
+            content: '';
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-left: 5px;
+            opacity: 0.7;
+        }
+
+        /* Визуальные индикаторы стрелок */
+        .sort-asc::after {
+            content: '↑';
+        }
+
+        .sort-desc::after {
+            content: '↓';
+        }
+
+        /* Анимация при сортировке */
+        tbody tr {
+            transition: background-color 0.3s, transform 0.3s;
+        }
+
+        tbody tr:hover {
+            transform: scale(1.005);
+        }
     </style>
 </head>
 <body>
@@ -340,8 +376,14 @@
     </footer>
 
     <script>
-        // Полная база данных 50 квантовых процессоров с реальными и правдоподобными характеристиками
-        const quantumComputers = [
+    // ===== БАЗОВЫЕ ПЕРЕМЕННЫЕ =====
+    let currentSortColumn = 'name';
+    let sortDirection = 'asc';
+    let isAdvancedMode = false;
+    let isInitialRender = true;
+
+    // ===== ВАШИ ДАННЫЕ =====
+    const quantumComputers = [
             // IBM Quantum
             { name: "IBM Quantum Eagle", company: "IBM", qubits: 127, fidelity: 99.9, speed: "1.5 GHz", gates: 5000, coherence: "100 μs", type: "Сверхпроводящие", noise: "1.2e-3", cooling: "15 mK", year: 2022 },
             { name: "IBM Quantum Osprey", company: "IBM", qubits: 433, fidelity: 99.7, speed: "1.6 GHz", gates: 7000, coherence: "95 μs", type: "Сверхпроводящие", noise: "1.8e-3", cooling: "15 mK", year: 2023 },
@@ -391,7 +433,7 @@
             { name: "Atom Computing N-2000", company: "Atom Computing", qubits: 2000, fidelity: 99.3, speed: "0.15 GHz", gates: 2000, coherence: "30 s", type: "Нейтральные атомы", noise: "6e-4", cooling: "Вакуумная камера", year: 2025 },
             
             // PsiQuantum
-            { name: "PsiQuantum Q1", company: "PsiQuantum", qubits: 1000000, fidelity: 99.99, speed: "N/A", gates: "Photonic", coherence: "N/A", type: "Фотонные", noise: "1e-4", cooling: "Комнатная", year: 2025 },
+            { name: "PsiQuantum Q1", company: "PsiQuantum", qubits: 15000, fidelity: 99.99, speed: "N/A", gates: "Photonic", coherence: "1.3 ms", type: "Фотонные", noise: "1e-4", cooling: "Комнатная", year: 2025 },
             
             // Alpine Quantum Technologies
             { name: "AQT AQC-20", company: "AQT", qubits: 20, fidelity: 99.85, speed: "0.4 GHz", gates: 1200, coherence: "5 s", type: "Ионные ловушки", noise: "4e-4", cooling: "Комнатная", year: 2023 },
@@ -424,141 +466,252 @@
             { name: "AQT AQC-35", company: "AQT", qubits: 35, fidelity: 99.88, speed: "0.38 GHz", gates: 1600, coherence: "6 s", type: "Ионные ловушки", noise: "3e-4", cooling: "Комнатная", year: 2024 }
         ];
 
-        // DOM элементы
-        const tableBody = document.getElementById('tableBody');
-        const tableHeader = document.getElementById('tableHeader');
-        const simpleBtn = document.getElementById('simpleMode');
-        const advancedBtn = document.getElementById('advancedMode');
-        let isAdvancedMode = false;
+    // ===== ВЫЧИСЛЕНИЕ ОЧКОВ (без NaN) =====
+quantumComputers.forEach(comp => {
+    // Простой режим (оставляем без изменений)
+    const typeBonus = 
+        comp.type === "Ионные ловушки" ? 0.15 :
+        comp.type === "Нейтральные атомы" ? 0.10 :
+        comp.type === "Сверхпроводящие" ? 0.05 : 0;
+    
+        comp.score_simple = (
+            0.70 * (comp.fidelity / 100) + 
+            0.30 * (comp.qubits / 1200) + 
+            typeBonus
+        ).toFixed(3);
 
-        // Функция отображения таблицы
-        function renderTable(mode) {
-            isAdvancedMode = mode;
+        // Расширенный режим (без NaN)
+        const coolingBonus = 
+            ["10 mK", "12 mK"].includes(comp.cooling) ? 1.05 : 1.0;
+    
+        // Безопасное извлечение чисел
+        const getSafeNumber = (value, defaultValue = 0) => {
+            if (value === "N/A" || value === "N/A" || value === null || value === undefined) {
+                return defaultValue;
+            }
+            return parseFloat(value);
+        };
+
+        // Обработка когерентности
+        const coherenceValue = getSafeNumber(
+            comp.coherence.includes('s') ? 
+                comp.coherence.replace('s', '') : 
+                comp.coherence.replace('μs', ''),
+            0
+        );
+    
+        const normCoherence = Math.min(1, 
+            comp.coherence.includes('s') ? 
+                coherenceValue / 60 : 
+                coherenceValue / 100
+        );
+
+        // Обработка шума
+        const noiseValue = getSafeNumber(comp.noise, 0.001);
+    
+        // Обработка вентилей
+        const gatesValue = getSafeNumber(comp.gates, 1000);
+
+        comp.score_advanced = (
+            0.45 * (comp.fidelity / 100) +
+            0.25 * normCoherence +
+            0.20 * (1 / (1 + noiseValue * 2500)) +
+            0.10 * (Math.min(1, gatesValue / 10000))
+        ).toFixed(3);
+    });
+
+    // ===== DOM ELEMENTS =====
+    const tableBody = document.getElementById('tableBody');
+    const tableHeader = document.getElementById('tableHeader');
+    const simpleBtn = document.getElementById('simpleMode');
+    const advancedBtn = document.getElementById('advancedMode');
+
+    // ===== СОРТИРОВКА =====
+    function sortTable(column) {
+        // Сбрасываем сортировку при смене режима
+        if (isInitialRender) {
+            currentSortColumn = column;
+            sortDirection = 'asc';
+            isInitialRender = false;
+        } else {
+            // Переключаем направление
+            if (currentSortColumn === column) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortColumn = column;
+                sortDirection = 'asc';
+            }
+        }
+
+        // Сортируем данные
+        quantumComputers.sort((a, b) => {
+            // Обработка числовых полей очков
+            if (column === 'score_simple' || column === 'score_advanced') {
+                const valA = parseFloat(a[column]);
+                const valB = parseFloat(b[column]);
+                return sortDirection === 'asc' ? valA - valB : valB - valA;
+            }
             
-            // Обновление активной кнопки
-            simpleBtn.classList.toggle('active', !mode);
-            advancedBtn.classList.toggle('active', mode);
+            // Обработка числовых полей
+            if (column === 'qubits' || column === 'fidelity' || 
+                column === 'gates' || column === 'year') {
+                return sortDirection === 'asc' 
+                    ? a[column] - b[column] 
+                    : b[column] - a[column];
+            }
             
-            // Очистка таблицы
-            tableBody.innerHTML = '';
+            // Обработка строк
+            const valA = String(a[column] || '').toLowerCase();
+            const valB = String(b[column] || '').toLowerCase();
+            return sortDirection === 'asc'
+                ? valA.localeCompare(valB)
+                : valB.localeCompare(valA);
+        });
+
+        renderTable(isAdvancedMode);
+        updateSortIndicators();
+    }
+
+    // ===== ОБНОВЛЕНИЕ СТРЕЛОК =====
+    function updateSortIndicators() {
+        document.querySelectorAll('th').forEach(th => {
+            th.innerHTML = th.innerHTML.replace(' ↑', '').replace(' ↓', '');
+        });
+
+        if (currentSortColumn) {
+            const headers = document.querySelectorAll('th');
+            headers.forEach(th => {
+                const text = th.textContent;
+                if (text.includes('Модель') && currentSortColumn === 'name') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Кубиты') && currentSortColumn === 'qubits') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Точность') && currentSortColumn === 'fidelity') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Когерентность') && currentSortColumn === 'coherence') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Шум') && currentSortColumn === 'noise') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Очки') && currentSortColumn.includes('score')) {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Тип') && currentSortColumn === 'type') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+                if (text.includes('Охлаждение') && currentSortColumn === 'cooling') {
+                    th.innerHTML += sortDirection === 'asc' ? ' ↑' : ' ↓';
+                }
+            });
+        }
+    }
+
+    // ===== РЕНДЕР ТАБЛИЦЫ =====
+    function renderTable(mode) {
+        isAdvancedMode = mode;
+        simpleBtn.classList.toggle('active', !mode);
+        advancedBtn.classList.toggle('active', mode);
+        tableBody.innerHTML = '';
+
+        if (mode) {
+            tableHeader.innerHTML = `
+                <th onclick="sortTable('name')">Модель</th>
+                <th onclick="sortTable('qubits')">Кубиты</th>
+                <th onclick="sortTable('fidelity')">Точность (%)</th>
+                <th onclick="sortTable('coherence')">Когерентность</th>
+                <th onclick="sortTable('noise')">Шум</th>
+                <th onclick="sortTable('score_advanced')">⚡ Очки</th>
+                <th onclick="sortTable('type')">Тип</th>
+                <th onclick="sortTable('cooling')">Охлаждение</th>
+            `;
+        } else {
+            tableHeader.innerHTML = `
+                <th onclick="sortTable('name')">Модель</th>
+                <th onclick="sortTable('qubits')">Кубиты</th>
+                <th onclick="sortTable('fidelity')">Точность (%)</th>
+                <th onclick="sortTable('score_simple')">⚡ Очки</th>
+                <th onclick="sortTable('type')">Тип</th>
+            `;
+        }
+
+        quantumComputers.forEach(comp => {
+            const row = document.createElement('tr');
             
-            // Обновление заголовков
             if (mode) {
-                tableHeader.innerHTML = `
-                    <th>Компания и модель</th>
-                    <th>Кубиты</th>
-                    <th>Точность (%)</th>
-                    <th>Скорость</th>
-                    <th>Квантовые вентили</th>
-                    <th>Время когерентности</th>
-                    <th>Тип кубитов</th>
-                    <th>Уровень шума</th>
-                    <th>Охлаждение</th>
-                    <th>Год</th>
+                const scoreAdv = parseFloat(comp.score_advanced);
+                const scoreColor = scoreAdv > 0.7 ? "#38a169" : scoreAdv > 0.5 ? "#dd6b20" : "#c53030";
+                
+                row.innerHTML = `
+                    <td><span class="company-badge ${getCompanyClass(comp.company)}">${comp.company}</span>${comp.name}</td>
+                    <td class="highlight">${comp.qubits}</td>
+                    <td>${comp.fidelity}</td>
+                    <td>${comp.coherence}</td>
+                    <td>${comp.noise}</td>
+                    <td style="color: ${scoreColor}; font-weight: bold">${comp.score_advanced}</td>
+                    <td>${comp.type}</td>
+                    <td>${comp.cooling}</td>
                 `;
             } else {
-                tableHeader.innerHTML = `
-                    <th>Компания и модель</th>
-                    <th>Кубиты</th>
-                    <th>Точность (%)</th>
-                    <th>Скорость</th>
+                const scoreSimple = parseFloat(comp.score_simple);
+                const scoreColor = scoreSimple > 0.7 ? "#38a169" : scoreSimple > 0.5 ? "#dd6b20" : "#c53030";
+                
+                row.innerHTML = `
+                    <td><span class="company-badge ${getCompanyClass(comp.company)}">${comp.company}</span>${comp.name}</td>
+                    <td class="highlight">${comp.qubits}</td>
+                    <td>${comp.fidelity}</td>
+                    <td style="color: ${scoreColor}; font-weight: bold">${comp.score_simple}</td>
+                    <td>${comp.type}</td>
                 `;
             }
             
-            // Заполнение данными
-            quantumComputers.forEach(comp => {
-                const row = document.createElement('tr');
-                
-                if (mode) {
-                    row.innerHTML = `
-                        <td><span class="company-badge ${getCompanyClass(comp.company)}">${comp.company}</span>${comp.name}</td>
-                        <td class="highlight">${comp.qubits}</td>
-                        <td>${comp.fidelity}</td>
-                        <td>${comp.speed}</td>
-                        <td>${comp.gates}</td>
-                        <td>${comp.coherence}</td>
-                        <td>${comp.type}</td>
-                        <td>${comp.noise}</td>
-                        <td>${comp.cooling}</td>
-                        <td>${comp.year}</td>
-                    `;
-                } else {
-                    row.innerHTML = `
-                        <td><span class="company-badge ${getCompanyClass(comp.company)}">${comp.company}</span>${comp.name}</td>
-                        <td class="highlight">${comp.qubits}</td>
-                        <td>${comp.fidelity}</td>
-                        <td>${comp.speed}</td>
-                    `;
-                }
-                
-                tableBody.appendChild(row);
-            });
-        }
-
-        // Вспомогательная функция для определения CSS класса компании
-        function getCompanyClass(company) {
-            const companyMap = {
-                "IBM": "ibm",
-                "Google": "google",
-                "IonQ": "ionq",
-                "Rigetti": "rigetti",
-                "D-Wave": "d-wave",
-                "Quantinuum": "honeywell",
-                "Xanadu": "xanadu",
-                "QuTech": "qu-ent",
-                "Atom Computing": "atom",
-                "PsiQuantum": "qu-ent",
-                "AQT": "alpine",
-                "OQC": "oxford",
-                "QuEra": "qu-ent",
-                "Pasqal": "pasqal",
-                "Intel": "intel"
-            };
-            
-            return companyMap[company] || "default";
-        }
-
-        // Инициализация таблицы
-        renderTable(false);
-
-        // Обработчики событий
-        simpleBtn.addEventListener('click', () => renderTable(false));
-        advancedBtn.addEventListener('click', () => renderTable(true));
-
-        // Плавная прокрутка для навигации
-        document.querySelectorAll('.nav-link').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-                this.classList.add('active');
-                
-                const targetId = this.getAttribute('href');
-                const targetElement = document.querySelector(targetId);
-                window.scrollTo({
-                    top: targetElement.offsetTop - 80,
-                    behavior: 'smooth'
-                });
-            });
+            tableBody.appendChild(row);
         });
 
-        // Анимация при прокрутке
-        const observerOptions = {
-            root: null,
-            threshold: 0.1
+        updateSortIndicators();
+    }
+
+    // ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
+    function getCompanyClass(company) {
+        const companyMap = {
+            "IBM": "ibm",
+            "Google": "google",
+            "IonQ": "ionq",
+            "Rigetti": "rigetti",
+            "D-Wave": "d-wave",
+            "Quantinuum": "honeywell",
+            "Xanadu": "xanadu",
+            "QuTech": "qu-ent",
+            "Atom Computing": "atom",
+            "PsiQuantum": "qu-ent",
+            "AQT": "alpine",
+            "OQC": "oxford",
+            "QuEra": "qu-ent",
+            "Pasqal": "pasqal",
+            "Intel": "intel"
         };
+        return companyMap[company] || "default";
+    }
 
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.classList.add('fade-in');
-                    observer.unobserve(entry.target);
-                }
-            });
-        }, observerOptions);
-
-        document.querySelectorAll('section, .content-card').forEach(el => {
-            observer.observe(el);
+    // ===== ИНИЦИАЛИЗАЦИЯ =====
+    document.addEventListener('DOMContentLoaded', () => {
+        // Первый рендер
+        renderTable(false);
+        
+        // Обработчики кнопок
+        simpleBtn.addEventListener('click', () => {
+            isInitialRender = true;
+            renderTable(false);
         });
-    </script>
+        
+        advancedBtn.addEventListener('click', () => {
+            isInitialRender = true;
+            renderTable(true);
+        });
+    });
+</script>
 </body>
 </html>
